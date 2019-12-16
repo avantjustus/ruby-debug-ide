@@ -18,11 +18,8 @@ require 'ruby-debug-ide/event_processor'
 module Debugger
 
   class << self
-    def find_free_port(host)
-      server = TCPServer.open(host, 0)
-      port   = server.addr[1]
-      server.close
-      port
+    def is_windows
+      RbConfig::CONFIG['host_os'] =~ /mswin|msys|mingw|cygwin|bccwin|wince|emc/
     end
 
     # Prints to the stderr using printf(*args) if debug logging flag (-d) is on.
@@ -145,6 +142,7 @@ module Debugger
 
             server = notify_dispatcher_if_needed(host, port, notify_dispatcher) do |real_port, port_changed|
               s = TCPServer.new(host, real_port)
+              s.setsockopt(:SOCKET, :REUSEADDR, 2)
               print_greeting_msg $stderr, host, real_port, port_changed ? "Subprocess" : "Fast" if defined? IDE_VERSION
               s
             end
@@ -158,6 +156,7 @@ module Debugger
           return unless server
 
           while (session = server.accept)
+            server.close
             if Debugger.cli_debug
               if session.peeraddr == 'AF_INET'
                 $stderr.puts "Connected from #{session.peeraddr[2]}"
@@ -169,6 +168,7 @@ module Debugger
             if dispatcher
               ENV['IDE_PROCESS_DISPATCHER'] = "#{session.peeraddr[2]}:#{dispatcher}" unless dispatcher.include?(":")
               ENV['DEBUGGER_HOST'] = host
+              ENV['DEBUGGER_PORT'] = port.to_s
             end
             begin
               @interface = RemoteInterface.new(session)
@@ -198,12 +198,9 @@ module Debugger
 
       3.times do |i|
         begin
+          $stderr.puts "#{Process.pid}: go create dispatcher socket #{acceptor_host} #{acceptor_port}"
           s = TCPSocket.open(acceptor_host, acceptor_port)
           dispatcher_answer = s.gets.chomp
-
-          if dispatcher_answer == "true"
-            port = Debugger.find_free_port(host)
-          end
 
           server = yield port, dispatcher_answer == "true"
 
@@ -219,6 +216,8 @@ module Debugger
           sleep 0.3
         end unless connected
       end
+
+      nil
     end
   end
 
